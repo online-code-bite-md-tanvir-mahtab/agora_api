@@ -30,7 +30,12 @@ class User(db.Model):
 
 # with app.app_context():
 #     db.create_all()
-    
+
+@app.route("/")
+def home():
+    return "Hello the api is on lets perty...."
+
+
 # Register user route
 @app.route('/register', methods=['POST'])
 def register_user():
