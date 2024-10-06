@@ -1,24 +1,22 @@
+import os
 from flask import Flask,  request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
 from agora_token_builder import RtcTokenBuilder
 import time
-import os
 
-basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
 
 # Agora credentials
 APP_ID = '3f8b6c06334e48ebae82b96e849a62ab'
 APP_CERTIFICATE = 'ae2545b63db7412b8dabe0578a388a6c'
 
-
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(basedir, "data.db")}'
- # Change to your preferred DB
+# Configure the SQLAlchemy part of the app
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') # Change to your preferred DB
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-
+# 'sqlite:///users.db'
 # Initialize the database
 db = SQLAlchemy(app)
 
