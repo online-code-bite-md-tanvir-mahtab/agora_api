@@ -26,14 +26,95 @@ class User(db.Model):
     username = db.Column(db.String(50), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password = db.Column(db.String(128), nullable=False)  # Hashed password
-    
 
-# with app.app_context():
-#     db.create_all()
+
+class CallSession(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    caller_id = db.Column(db.String(50), nullable=False)
+    receiver_id = db.Column(db.String(50), nullable=False)
+    channel_name = db.Column(db.String(50), nullable=False)
+    receiver_token = db.Column(db.String(250), nullable=False)
+
+
+with app.app_context():
+    db.create_all()
 
 @app.route("/")
 def home():
     return "Hello the api is on lets perty...."
+
+
+
+@app.route('/delete-call-session', methods=['DELETE'])
+def delete_call_session():
+    data = request.get_json()
+
+    receiver_id = data.get('receiver_id')
+
+    if not receiver_id:
+        return jsonify({'error': 'Receiver ID is required'}), 400
+
+    try:
+        # Find the call session by receiver_id
+        call_session = CallSession.query.filter_by(receiver_id=receiver_id).first()
+
+        if not call_session:
+            return jsonify({'error': 'No active call session found for this receiver'}), 404
+
+        # Delete the call session
+        db.session.delete(call_session)
+        db.session.commit()
+
+        return jsonify({'message': 'Call session deleted successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+# API to send call details to the receiver
+@app.route('/send-call-details', methods=['POST'])
+def send_call_details():
+    data = request.get_json()
+
+    caller_id = data.get('caller_id')
+    receiver_id = data.get('receiver_id')
+    channel_name = data.get('channel_name')
+    receiver_token = data.get('receiver_token')
+
+    if not all([caller_id, receiver_id, channel_name, receiver_token]):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    try:
+        # Save call session to the database
+        call_session = CallSession(
+            caller_id=caller_id,
+            receiver_id=receiver_id,
+            channel_name=channel_name,
+            receiver_token=receiver_token
+        )
+        db.session.add(call_session)
+        db.session.commit()
+
+        # Notify the receiver here (Optional, implement WebSocket or Push Notification if needed)
+
+        return jsonify({'message': 'Call details sent successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/check-incoming-call/<receiver_id>', methods=['GET'])
+def check_incoming_call(receiver_id):
+    # Query the database for an active call session for the given receiver
+    call_session = CallSession.query.filter_by(receiver_id=receiver_id).first()
+
+    if call_session:
+        return jsonify({
+            'caller_id': call_session.caller_id,
+            'channel_name': call_session.channel_name,
+            'receiver_token': call_session.receiver_token
+        }), 200
+    else:
+        return jsonify({'message': 'No incoming calls'}), 200
 
 
 # Register user route
