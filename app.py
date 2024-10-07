@@ -5,6 +5,8 @@ import uuid
 from agora_token_builder import RtcTokenBuilder
 import time
 import os
+from flask_migrate import Migrate
+
 
 app = Flask(__name__)
 
@@ -12,13 +14,18 @@ app = Flask(__name__)
 APP_ID = '3f8b6c06334e48ebae82b96e849a62ab'
 APP_CERTIFICATE = 'ae2545b63db7412b8dabe0578a388a6c'
 
-# Configure the SQLAlchemy part of the app
-app.config['SQLALCHEMY_DATABASE_URI'] =  os.getenv("DATABASE_URL","sqlite:///users.db") # Change to your preferred DB
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+    "DATABASE_URL", 
+    "postgresql://default:2JVBgN6fdZEi@ep-small-cell-a48v87ie-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
+)
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 
 # Initialize the database
 db = SQLAlchemy(app)
+
+migrate = Migrate(app,db)
 
 # Define the User model
 class User(db.Model):
