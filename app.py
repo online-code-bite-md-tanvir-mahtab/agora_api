@@ -62,30 +62,7 @@ def delete_call_session():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/send-call-details', methods=['POST'])
-def send_call_details():
-    data = request.get_json()
 
-    caller_id = data.get('caller_id')
-    receiver_id = data.get('receiver_id')
-    channel_name = data.get('channel_name')
-    receiver_token = data.get('receiver_token')
-
-    if not all([caller_id, receiver_id, channel_name, receiver_token]):
-        return jsonify({'error': 'Missing required fields'}), 400
-
-    try:
-        df = load_call_sessions()
-        df = df.append({
-            'caller_id': caller_id,
-            'receiver_id': receiver_id,
-            'channel_name': channel_name,
-            'receiver_token': receiver_token
-        }, ignore_index=True)
-        save_call_sessions(df)
-        return jsonify({'message': 'Call details sent successfully'}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/check-incoming-call/<receiver_id>', methods=['GET'])
@@ -102,6 +79,33 @@ def check_incoming_call(receiver_id):
         }), 200
     else:
         return jsonify({'message': 'No incoming calls'}), 200
+
+
+@app.route('/send-call-details', methods=['POST'])
+def send_call_details():
+    data = request.get_json()
+
+    caller_id = data.get('caller_id')
+    receiver_id = data.get('receiver_id')
+    channel_name = data.get('channel_name')
+    receiver_token = data.get('receiver_token')
+
+    if not all([caller_id, receiver_id, channel_name, receiver_token]):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    try:
+        df = load_call_sessions()
+        new_call = pd.DataFrame([{
+            'caller_id': caller_id,
+            'receiver_id': receiver_id,
+            'channel_name': channel_name,
+            'receiver_token': receiver_token
+        }])
+        df = pd.concat([df, new_call], ignore_index=True)
+        save_call_sessions(df)
+        return jsonify({'message': 'Call details sent successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/register', methods=['POST'])
@@ -122,10 +126,12 @@ def register_user():
         'password': hashed_password
     }
 
-    df = df.append(new_user, ignore_index=True)
+    new_user_df = pd.DataFrame([new_user])
+    df = pd.concat([df, new_user_df], ignore_index=True)
     save_users(df)
 
     return jsonify({'message': 'User registered successfully'}), 201
+
 
 
 @app.route('/login', methods=['POST'])
