@@ -1,12 +1,11 @@
-from flask import Flask,  request, jsonify
-from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
+import logging
 import uuid
-from agora_token_builder import RtcTokenBuilder
 import time
 import os
-from flask_migrate import Migrate
-
+import pandas as pd
+from flask import Flask, request, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
+from agora_token_builder import RtcTokenBuilder
 
 app = Flask(__name__)
 
@@ -14,72 +13,55 @@ app = Flask(__name__)
 APP_ID = '3f8b6c06334e48ebae82b96e849a62ab'
 APP_CERTIFICATE = 'ae2545b63db7412b8dabe0578a388a6c'
 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
-    "DATABASE_URL", 
-    "postgresql://default:2JVBgN6fdZEi@ep-small-cell-a48v87ie-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
-)
+# File paths for storing users and call sessions
+USER_CSV = "users.csv"
+CALL_SESSION_CSV = "call_sessions.csv"
 
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Ensure CSV files exist and create them with headers if not
+if not os.path.exists(USER_CSV):
+    pd.DataFrame(columns=['public_id', 'username', 'email', 'password']).to_csv(USER_CSV, index=False)
 
+if not os.path.exists(CALL_SESSION_CSV):
+    pd.DataFrame(columns=['caller_id', 'receiver_id', 'channel_name', 'receiver_token']).to_csv(CALL_SESSION_CSV, index=False)
 
-# Initialize the database
-db = SQLAlchemy(app)
+# Helper functions to read/write CSV files
+def load_users():
+    return pd.read_csv(USER_CSV)
 
-migrate = Migrate(app,db)
+def save_users(df):
+    df.to_csv(USER_CSV, index=False)
 
-# Define the User model
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    public_id = db.Column(db.String(50), unique=True)  # Unique public ID
-    username = db.Column(db.String(50), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(128), nullable=False)  # Hashed password
+def load_call_sessions():
+    return pd.read_csv(CALL_SESSION_CSV)
 
+def save_call_sessions(df):
+    df.to_csv(CALL_SESSION_CSV, index=False)
 
-class CallSession(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    caller_id = db.Column(db.String(50), nullable=False)
-    receiver_id = db.Column(db.String(50), nullable=False)
-    channel_name = db.Column(db.String(50), nullable=False)
-    receiver_token = db.Column(db.String(250), nullable=False)
-
-
-with app.app_context():
-    db.create_all()
 
 @app.route("/")
 def home():
-    return "Hello the api is on lets perty...."
-
-
+    return "Hello the API is on! Let's party..."
 
 @app.route('/delete-call-session', methods=['DELETE'])
 def delete_call_session():
     data = request.get_json()
-
     receiver_id = data.get('receiver_id')
 
     if not receiver_id:
         return jsonify({'error': 'Receiver ID is required'}), 400
 
     try:
-        # Find the call session by receiver_id
-        call_session = CallSession.query.filter_by(receiver_id=receiver_id).first()
-
-        if not call_session:
+        df = load_call_sessions()
+        if receiver_id in df['receiver_id'].values:
+            df = df[df['receiver_id'] != receiver_id]
+            save_call_sessions(df)
+            return jsonify({'message': 'Call session deleted successfully'}), 200
+        else:
             return jsonify({'error': 'No active call session found for this receiver'}), 404
-
-        # Delete the call session
-        db.session.delete(call_session)
-        db.session.commit()
-
-        return jsonify({'message': 'Call session deleted successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-
-# API to send call details to the receiver
 @app.route('/send-call-details', methods=['POST'])
 def send_call_details():
     data = request.get_json()
@@ -93,18 +75,14 @@ def send_call_details():
         return jsonify({'error': 'Missing required fields'}), 400
 
     try:
-        # Save call session to the database
-        call_session = CallSession(
-            caller_id=caller_id,
-            receiver_id=receiver_id,
-            channel_name=channel_name,
-            receiver_token=receiver_token
-        )
-        db.session.add(call_session)
-        db.session.commit()
-
-        # Notify the receiver here (Optional, implement WebSocket or Push Notification if needed)
-
+        df = load_call_sessions()
+        df = df.append({
+            'caller_id': caller_id,
+            'receiver_id': receiver_id,
+            'channel_name': channel_name,
+            'receiver_token': receiver_token
+        }, ignore_index=True)
+        save_call_sessions(df)
         return jsonify({'message': 'Call details sent successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -112,86 +90,75 @@ def send_call_details():
 
 @app.route('/check-incoming-call/<receiver_id>', methods=['GET'])
 def check_incoming_call(receiver_id):
-    # Query the database for an active call session for the given receiver
-    call_session = CallSession.query.filter_by(receiver_id=receiver_id).first()
+    df = load_call_sessions()
+    call_session = df[df['receiver_id'] == receiver_id]
 
-    if call_session:
+    if not call_session.empty:
+        call_session = call_session.iloc[0]
         return jsonify({
-            'caller_id': call_session.caller_id,
-            'channel_name': call_session.channel_name,
-            'receiver_token': call_session.receiver_token
+            'caller_id': call_session['caller_id'],
+            'channel_name': call_session['channel_name'],
+            'receiver_token': call_session['receiver_token']
         }), 200
     else:
         return jsonify({'message': 'No incoming calls'}), 200
 
 
-# Register user route
 @app.route('/register', methods=['POST'])
 def register_user():
-    data = request.get_json()  # Get JSON data from request
-    
-    # Check if username or email already exists
-    if User.query.filter_by(username=data['username']).first() is not None:
+    data = request.get_json()
+    df = load_users()
+
+    if data['username'] in df['username'].values:
         return jsonify({'message': 'Username already exists'}), 400
-    if User.query.filter_by(email=data['email']).first() is not None:
+    if data['email'] in df['email'].values:
         return jsonify({'message': 'Email already exists'}), 400
 
-    # Create a new user# Replace the hash method from 'sha256' to 'pbkdf2:sha256'
     hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
-    new_user = User(public_id=str(uuid.uuid4()), username=data['username'], email=data['email'], password=hashed_password)
-    with app.app_context():
-        # Add the user to the database
-        db.session.add(new_user)
-        db.session.commit()
+    new_user = {
+        'public_id': str(uuid.uuid4()),
+        'username': data['username'],
+        'email': data['email'],
+        'password': hashed_password
+    }
+
+    df = df.append(new_user, ignore_index=True)
+    save_users(df)
 
     return jsonify({'message': 'User registered successfully'}), 201
 
-# Login route (Optional)
+
 @app.route('/login', methods=['POST'])
 def login_user():
     data = request.get_json()
-    
-    user = User.query.filter_by(username=data['username']).first()
-    if user and check_password_hash(user.password, data['password']):
-        return jsonify({'message': 'Login successful', 'public_id': user.public_id}), 200
-    
+    df = load_users()
+
+    user = df[df['username'] == data['username']].iloc[0] if not df[df['username'] == data['username']].empty else None
+
+    if user is not None and check_password_hash(user['password'], data['password']):
+        return jsonify({'message': 'Login successful', 'public_id': user['public_id']}), 200
     return jsonify({'message': 'Invalid username or password'}), 401
 
 
-# Get all users route
 @app.route('/users', methods=['GET'])
 def get_all_users():
-    users = User.query.all()  # Query all users from the database
-    output = []
-
-    # Iterate through the users and format the response
-    for user in users:
-        user_data = {
-            'public_id': user.public_id,
-            'username': user.username,
-            'email': user.email
-        }
-        output.append(user_data)
-
+    df = load_users()
+    output = df[['public_id', 'username', 'email']].to_dict(orient='records')
     return jsonify({'users': output}), 200
 
 
 # Function to generate Agora token
 def generate_agora_token(channel_name, uid):
-    expiration_time_in_seconds = 3600  # Token expiration time in seconds (e.g., 1 hour)
+    expiration_time_in_seconds = 3600
     current_timestamp = int(time.time())
     privilege_expired_ts = current_timestamp + expiration_time_in_seconds
-
-    # Agora roles: Publisher (for broadcasting) or Subscriber
     role = 1  # RtcRole.PUBLISHER
-
-    # Generate token
     token = RtcTokenBuilder.buildTokenWithUid(APP_ID, APP_CERTIFICATE, channel_name, uid, role, privilege_expired_ts)
     return token
 
+
 @app.route('/generate-token', methods=['GET'])
 def get_token():
-    # Get the user who initiated the call and the person they want to call
     caller_id = request.args.get('callerId')
     receiver_id = request.args.get('receiverId')
     channel_name = request.args.get("channelname")
@@ -199,14 +166,9 @@ def get_token():
     if not caller_id or not receiver_id:
         return jsonify({'error': 'Caller and receiver IDs are required'}), 400
 
-
-
     try:
-        # Generate tokens for both caller and receiver
         token_caller = generate_agora_token(channel_name, int(caller_id))
         token_receiver = generate_agora_token(channel_name, int(receiver_id))
-
-        # Return both tokens and the shared channel name
         return jsonify({
             'channelName': channel_name,
             'callerToken': token_caller,
@@ -216,3 +178,5 @@ def get_token():
         return jsonify({'error': str(e)}), 500
 
 
+if __name__ == '__main__':
+    app.run(debug=True)
